@@ -1,0 +1,47 @@
+{
+  "name": "@pilldrops/sdk",
+  "version": "1.1.0",
+  "description": "JavaScript/TypeScript SDK for PillDrops — AI-native sandboxes (secure code execution + app hosting for AI agents)",
+  "homepage": "https://github.com/pilldrops-oss/pilldrops-js#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pilldrops-oss/pilldrops-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/pilldrops-oss/pilldrops-js/issues"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "sandbox",
+    "ai",
+    "agent",
+    "code-execution",
+    "e2b",
+    "pilldrops"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
