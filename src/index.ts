@@ -231,7 +231,7 @@ export class Sandbox {
   async resume(): Promise<void> { await this.req('POST', `/v1/sandboxes/${this.id}/resume`) }
   async setTimeout(seconds: number): Promise<void> {
     await this.req('POST', `/v1/sandboxes/${this.id}/timeout`, {
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ timeout: seconds }),
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seconds }),
     })
   }
   async metrics(): Promise<any> { return (await this.req('GET', `/v1/sandboxes/${this.id}/metrics`)).json() }
