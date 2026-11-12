@@ -29,8 +29,8 @@ import { Sandbox } from '@pilldrops/sdk'
 const sb = await Sandbox.create({ template: 'python-3.11' })
 try {
   console.log((await sb.run("python3 -c 'print(6*7)'")).stdout)   // 42
-  await sb.writeFile('/app/main.py', "print('hello')")
-  console.log((await sb.run('python3 main.py', '/app')).stdout)    // hello
+  await sb.writeFile('app/main.py', "print('hello')")              // relative to the sandbox home
+  console.log((await sb.run('python3 app/main.py')).stdout)        // hello
   await sb.pause()
   await sb.resume()                                                // same memory, same processes
 } finally {

@@ -197,23 +197,22 @@ export class Sandbox {
     return this.run(`${runner} ${name}`)
   }
 
-  /** Write file content (path is relative to the /workspace root). */
+  /** Write file content. Paths are relative to the sandbox home; an absolute path must be inside it. */
   async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-    await this.req('POST', `/v1/sandboxes/${this.id}/files?path=${encodeURIComponent(path.replace(/^\/+/, ''))}`, {
+    await this.req('POST', `/v1/sandboxes/${this.id}/files?path=${encodeURIComponent(path)}`, {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: content,
     })
   }
 
   async readFile(path: string): Promise<string> {
-    const res = await this.req('GET', `/v1/sandboxes/${this.id}/files?path=${encodeURIComponent(path.replace(/^\/+/, ''))}`)
+    const res = await this.req('GET', `/v1/sandboxes/${this.id}/files?path=${encodeURIComponent(path)}`)
     return res.text()
   }
 
-  /** Upload a local file or directory (dir is tar-streamed) into the workspace. */
+  /** Upload a local file or directory (dir is tar-streamed). A relative remote is under the sandbox home. */
   async upload(local: string, remote: string): Promise<void> {
     const { statSync, readFileSync: rf } = await import('node:fs')
-    remote = remote.replace(/^\/+/, '')
     if (statSync(local).isDirectory()) {
       // tar the dir locally (uses the system tar), upload, untar via exec.
       const tmpTar = execFileSync('mktemp', ['-t', 'sfupXXXX.tgz']).toString().trim()
