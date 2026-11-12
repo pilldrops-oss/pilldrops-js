@@ -1,6 +1,6 @@
 {
   "name": "@pilldrops/sdk",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "JavaScript/TypeScript SDK for PillDrops — AI-native sandboxes (secure code execution + app hosting for AI agents)",
   "homepage": "https://github.com/pilldrops-oss/pilldrops-js#readme",
   "repository": {
