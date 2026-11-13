@@ -53,6 +53,36 @@ console.log(app.url, app.host(3000))
 | `sb.metrics()` | resource use |
 | `buildImage(contextDir, tag)` | build a custom image from a Dockerfile; launch it with `Sandbox.create({ image })` |
 
+## Webhooks
+
+Get a signed POST when a sandbox in your org changes state. These take the org
+API key.
+
+```ts
+import { createWebhook, verifyWebhookSignature } from '@pilldrops/sdk'
+
+const { webhook, secret } = await createWebhook('https://example.com/hook', ['sandbox.ended'])
+// store `secret` now: it is returned only here
+
+// in your endpoint, with the raw request body
+const ok = verifyWebhookSignature(secret, req.headers['x-pilldrops-timestamp'],
+  req.headers['x-pilldrops-signature'], rawBody)
+```
+
+| | |
+|---|---|
+| `listWebhooks()` · `createWebhook(url, events)` · `deleteWebhook(id)` | manage endpoints |
+| `testWebhook(id)` | send one signed probe: `{ ok, status, error? }` |
+| `setWebhookEnabled(id, enabled)` | pause or resume deliveries |
+| `listWebhookDeliveries()` | recent deliveries, newest first |
+| `verifyWebhookSignature(secret, timestamp, signature, body, toleranceSeconds = 300)` | `true` when the signature matches and the timestamp is fresh |
+
+Events: `sandbox.created`, `sandbox.ended`, `sandbox.paused`, `sandbox.resumed`,
+`sandbox.checkpointed`, `sandbox.forked`, `sandbox.restarted`, `sandbox.crashed`,
+`sandbox.out_of_memory`, `sandbox.unreachable`. The body is
+`{ id, type, at, sandbox: { id, template }, data }`. Retries reuse `id` (also in
+`x-pilldrops-delivery`), so dedupe on it.
+
 ## Build and test
 
 ```bash

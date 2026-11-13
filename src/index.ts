@@ -23,6 +23,7 @@ import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 
 export interface Config {
   apiUrl: string
@@ -275,4 +276,133 @@ export async function listTemplates(opts: { apiUrl?: string; apiKey?: string } =
   const key = opts.apiKey || cfg.key
   const res = await fetch(`${base}/v1/templates`, { headers: key ? { Authorization: `Bearer ${key}` } : {} })
   return res.json() as Promise<any[]>
+}
+
+export type WebhookEvent =
+  | 'sandbox.created' | 'sandbox.ended' | 'sandbox.paused' | 'sandbox.resumed'
+  | 'sandbox.checkpointed' | 'sandbox.forked' | 'sandbox.restarted'
+  | 'sandbox.crashed' | 'sandbox.out_of_memory' | 'sandbox.unreachable'
+
+export interface Webhook {
+  id: string
+  sandbox_id: string
+  org_id: string
+  url: string
+  events: WebhookEvent[]
+  enabled: boolean
+  consecutive_failures: number
+  disabled_reason?: string
+  created_at: string
+  created_by?: string
+  last_at?: string
+  last_status?: number
+}
+
+export interface CreatedWebhook {
+  webhook: Webhook
+  /** Signs every delivery. Returned only here. */
+  secret: string
+  shown_once: boolean
+  note: string
+}
+
+export interface WebhookTestResult {
+  webhook_id: string
+  status: number
+  ok: boolean
+  error?: string
+  retryable?: boolean
+}
+
+export interface WebhookDelivery {
+  id: string
+  webhook_id: string
+  sandbox_id: string
+  org_id: string
+  event_type: string
+  event_seq: number
+  attempts: number
+  state: 'pending' | 'sent' | 'failed'
+  last_status?: number
+  last_error?: string
+  next_at?: string
+  created_at: string
+  updated_at?: string
+}
+
+/** The JSON body of one delivery. `id` is the same on every retry. */
+export interface WebhookPayload {
+  id: string
+  type: WebhookEvent
+  at: string
+  sandbox: { id: string; template?: string }
+  data?: Record<string, unknown>
+}
+
+type ApiOptions = { apiUrl?: string; apiKey?: string }
+
+async function webhookReq(method: string, path: string, opts: ApiOptions, body?: unknown): Promise<any> {
+  const cfg = config()
+  const base = (opts.apiUrl || cfg.apiUrl).replace(/\/+$/, '')
+  const key = opts.apiKey || cfg.key
+  if (!base) throw new Error('no API URL — set PILLDROPS_API_URL to your PillDrops server')
+  const res = await fetch(`${base}${path}`, {
+    method,
+    headers: {
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  if (res.status === 404) throw new Error(`not found: ${path}`)
+  if (!res.ok) throw new Error(`${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  return res.json()
+}
+
+/** List the org's webhooks. */
+export async function listWebhooks(opts: ApiOptions = {}): Promise<Webhook[]> {
+  return (await webhookReq('GET', '/v1/webhooks', opts)).webhooks || []
+}
+
+/** Register an endpoint for sandbox lifecycle events. Store the returned secret: it is not shown again. */
+export async function createWebhook(url: string, events: WebhookEvent[], opts: ApiOptions = {}): Promise<CreatedWebhook> {
+  return webhookReq('POST', '/v1/webhooks', opts, { url, events })
+}
+
+export async function deleteWebhook(id: string, opts: ApiOptions = {}): Promise<void> {
+  await webhookReq('DELETE', `/v1/webhooks/${encodeURIComponent(id)}`, opts)
+}
+
+/** Send one signed probe. A failing endpoint resolves with `ok: false`, it does not throw. */
+export async function testWebhook(id: string, opts: ApiOptions = {}): Promise<WebhookTestResult> {
+  return webhookReq('POST', `/v1/webhooks/${encodeURIComponent(id)}/test`, opts)
+}
+
+export async function setWebhookEnabled(id: string, enabled: boolean, opts: ApiOptions = {}): Promise<{ id: string; enabled: boolean }> {
+  return webhookReq('POST', `/v1/webhooks/${encodeURIComponent(id)}/toggle`, opts, { enabled })
+}
+
+/** Recent deliveries, newest first. */
+export async function listWebhookDeliveries(opts: ApiOptions = {}): Promise<WebhookDelivery[]> {
+  return (await webhookReq('GET', '/v1/webhooks/deliveries', opts)).deliveries || []
+}
+
+/**
+ * Check a delivery against the `x-pilldrops-timestamp` and
+ * `x-pilldrops-signature` headers. Pass the raw request body, not re-serialized
+ * JSON. False for a bad signature or a timestamp more than `toleranceSeconds`
+ * from now.
+ */
+export function verifyWebhookSignature(
+  secret: string,
+  timestamp: string,
+  signature: string,
+  body: string | Uint8Array,
+  toleranceSeconds = 300,
+): boolean {
+  if (!/^\d+$/.test(timestamp)) return false
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > toleranceSeconds) return false
+  const expected = Buffer.from('sha256=' + createHmac('sha256', secret).update(`${timestamp}.`).update(body).digest('hex'))
+  const given = Buffer.from(signature)
+  return given.length === expected.length && timingSafeEqual(given, expected)
 }
