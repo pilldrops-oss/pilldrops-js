@@ -25,6 +25,23 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
+/** An HTTP failure from the PillDrops API, with the status and the response body. */
+export class ApiError extends Error {
+  readonly status: number
+  readonly body: string
+  constructor(message: string, status: number, body: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.body = body
+  }
+}
+
+async function apiError(res: Response, message: (body: string) => string): Promise<ApiError> {
+  const body = await res.text()
+  return new ApiError(message(body), res.status, body)
+}
+
 export interface Config {
   apiUrl: string
   key: string
@@ -120,8 +137,8 @@ export class Sandbox {
       headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(body),
     })
-    if (res.status === 401) throw new Error('invalid API key — run `pilldrops login`')
-    if (!res.ok) throw new Error(`create failed (${res.status}): ${await res.text()}`)
+    if (res.status === 401) throw await apiError(res, () => 'invalid API key — run `pilldrops login`')
+    if (!res.ok) throw await apiError(res, (b) => `create failed (${res.status}): ${b}`)
     const data: any = await res.json()
     return new Sandbox(data.id, base, key, data)
   }
@@ -132,8 +149,8 @@ export class Sandbox {
       ...init,
       headers: { ...(this.key ? { Authorization: `Bearer ${this.key}` } : {}), ...(init.headers || {}) },
     })
-    if (res.status === 404) throw new Error(`not found: ${path}`)
-    if (!res.ok) throw new Error(`${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 200)}`)
+    if (res.status === 404) throw await apiError(res, () => `not found: ${path}`)
+    if (!res.ok) throw await apiError(res, (b) => `${method} ${path} → ${res.status}: ${b.slice(0, 200)}`)
     return res
   }
 
@@ -171,8 +188,8 @@ export class Sandbox {
     const res = await fetch(`${base}/v1/sandboxes/${sandboxId}`, {
       headers: key ? { Authorization: `Bearer ${key}` } : {},
     })
-    if (res.status === 404) throw new Error(`sandbox not found: ${sandboxId}`)
-    if (!res.ok) throw new Error(`connect failed (${res.status}): ${await res.text()}`)
+    if (res.status === 404) throw await apiError(res, () => `sandbox not found: ${sandboxId}`)
+    if (!res.ok) throw await apiError(res, (b) => `connect failed (${res.status}): ${b}`)
     return new Sandbox(sandboxId, base, key, await res.json())
   }
 
@@ -184,7 +201,7 @@ export class Sandbox {
     const res = await fetch(`${base}/v1/sandboxes`, {
       headers: key ? { Authorization: `Bearer ${key}` } : {},
     })
-    if (!res.ok) throw new Error(`list failed (${res.status}): ${await res.text()}`)
+    if (!res.ok) throw await apiError(res, (b) => `list failed (${res.status}): ${b}`)
     const data: any = await res.json()
     return Array.isArray(data) ? data : (data.sandboxes || [])
   }
@@ -264,7 +281,7 @@ export async function buildImage(
     headers: { 'Content-Type': 'application/octet-stream', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
     body: data,
   })
-  if (!res.ok) throw new Error(`image build request failed (${res.status}): ${(await res.text()).slice(0, 300)}`)
+  if (!res.ok) throw await apiError(res, (b) => `image build request failed (${res.status}): ${b.slice(0, 300)}`)
   const d: any = await res.json()
   if (!d.ok) throw new Error('image build failed:\n' + String(d.log || '').slice(-2000))
   return d.tag as string
@@ -354,8 +371,8 @@ async function webhookReq(method: string, path: string, opts: ApiOptions, body?:
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
-  if (res.status === 404) throw new Error(`not found: ${path}`)
-  if (!res.ok) throw new Error(`${method} ${path} → ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  if (res.status === 404) throw await apiError(res, () => `not found: ${path}`)
+  if (!res.ok) throw await apiError(res, (b) => `${method} ${path} → ${res.status}: ${b.slice(0, 200)}`)
   return res.json()
 }
 
