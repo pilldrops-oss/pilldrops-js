@@ -358,11 +358,15 @@ export interface WebhookPayload {
 
 type ApiOptions = { apiUrl?: string; apiKey?: string }
 
-async function webhookReq(method: string, path: string, opts: ApiOptions, body?: unknown): Promise<any> {
+function apiTarget(opts: ApiOptions): { base: string; key: string } {
   const cfg = config()
   const base = (opts.apiUrl || cfg.apiUrl).replace(/\/+$/, '')
-  const key = opts.apiKey || cfg.key
   if (!base) throw new Error('no API URL — set PILLDROPS_API_URL to your PillDrops server')
+  return { base, key: opts.apiKey || cfg.key }
+}
+
+async function apiReq(method: string, path: string, opts: ApiOptions, body?: unknown): Promise<any> {
+  const { base, key } = apiTarget(opts)
   const res = await fetch(`${base}${path}`, {
     method,
     headers: {
@@ -378,30 +382,30 @@ async function webhookReq(method: string, path: string, opts: ApiOptions, body?:
 
 /** List the org's webhooks. */
 export async function listWebhooks(opts: ApiOptions = {}): Promise<Webhook[]> {
-  return (await webhookReq('GET', '/v1/webhooks', opts)).webhooks || []
+  return (await apiReq('GET', '/v1/webhooks', opts)).webhooks || []
 }
 
 /** Register an endpoint for sandbox lifecycle events. Store the returned secret: it is not shown again. */
 export async function createWebhook(url: string, events: WebhookEvent[], opts: ApiOptions = {}): Promise<CreatedWebhook> {
-  return webhookReq('POST', '/v1/webhooks', opts, { url, events })
+  return apiReq('POST', '/v1/webhooks', opts, { url, events })
 }
 
 export async function deleteWebhook(id: string, opts: ApiOptions = {}): Promise<void> {
-  await webhookReq('DELETE', `/v1/webhooks/${encodeURIComponent(id)}`, opts)
+  await apiReq('DELETE', `/v1/webhooks/${encodeURIComponent(id)}`, opts)
 }
 
 /** Send one signed probe. A failing endpoint resolves with `ok: false`, it does not throw. */
 export async function testWebhook(id: string, opts: ApiOptions = {}): Promise<WebhookTestResult> {
-  return webhookReq('POST', `/v1/webhooks/${encodeURIComponent(id)}/test`, opts)
+  return apiReq('POST', `/v1/webhooks/${encodeURIComponent(id)}/test`, opts)
 }
 
 export async function setWebhookEnabled(id: string, enabled: boolean, opts: ApiOptions = {}): Promise<{ id: string; enabled: boolean }> {
-  return webhookReq('POST', `/v1/webhooks/${encodeURIComponent(id)}/toggle`, opts, { enabled })
+  return apiReq('POST', `/v1/webhooks/${encodeURIComponent(id)}/toggle`, opts, { enabled })
 }
 
 /** Recent deliveries, newest first. */
 export async function listWebhookDeliveries(opts: ApiOptions = {}): Promise<WebhookDelivery[]> {
-  return (await webhookReq('GET', '/v1/webhooks/deliveries', opts)).deliveries || []
+  return (await apiReq('GET', '/v1/webhooks/deliveries', opts)).deliveries || []
 }
 
 /**
@@ -422,4 +426,115 @@ export function verifyWebhookSignature(
   const expected = Buffer.from('sha256=' + createHmac('sha256', secret).update(`${timestamp}.`).update(body).digest('hex'))
   const given = Buffer.from(signature)
   return given.length === expected.length && timingSafeEqual(given, expected)
+}
+
+export interface FunctionInfo {
+  name: string
+  template: string
+  start: string
+  port: number
+  vcpu: number
+  memory_mb: number
+  max_replicas: number
+  replica_concurrency: number
+  /** Seconds; 0 keeps one replica warm. */
+  idle_timeout: number
+  /** Empty when the function needs a key to invoke. */
+  public_id: string
+  replicas: number
+  invokes: number
+  cold_starts: number
+  refused: number
+  last_invoked_at: number
+  env: Record<string, string>
+  created_at: number
+  updated_at: number
+}
+
+export interface FunctionSpec {
+  name: string
+  start: string
+  template?: string
+  port?: number
+  vcpu?: number
+  memory_mb?: number
+  max_replicas?: number
+  replica_concurrency?: number
+  idle_timeout?: number
+  /** Invokable without a key at `publicInvokeUrl(fn)`. */
+  public?: boolean
+  env?: Record<string, string>
+  files?: { path: string; content: string }[]
+}
+
+export interface FunctionDeployment {
+  id: string
+  at: number
+  by: string
+  files: number
+  bytes: number
+  /** The deployment this one restored, or empty. */
+  rollback_of: string
+}
+
+const fnPath = (name: string) => `/v1/functions/${encodeURIComponent(name)}`
+
+export async function listFunctions(opts: ApiOptions = {}): Promise<FunctionInfo[]> {
+  return (await apiReq('GET', '/v1/functions', opts)).functions || []
+}
+
+export async function getFunction(name: string, opts: ApiOptions = {}): Promise<FunctionInfo> {
+  return apiReq('GET', fnPath(name), opts)
+}
+
+export async function createFunction(spec: FunctionSpec, opts: ApiOptions = {}): Promise<FunctionInfo> {
+  return apiReq('POST', '/v1/functions', opts, spec)
+}
+
+/** Omitted fields keep their stored value; `env: {}` clears env, `public: false` turns key-less invoke off. */
+export async function updateFunction(name: string, changes: Partial<Omit<FunctionSpec, 'name'>>, opts: ApiOptions = {}): Promise<void> {
+  await apiReq('PUT', fnPath(name), opts, changes)
+}
+
+export async function deleteFunction(name: string, opts: ApiOptions = {}): Promise<void> {
+  await apiReq('DELETE', fnPath(name), opts)
+}
+
+/**
+ * Call the function with the API key, POST unless `method` says otherwise. `path` (with any
+ * query) is appended after `/invoke`. Resolves with the handler's response whatever its status.
+ */
+export async function invokeFunction(
+  name: string,
+  init: RequestInit & { path?: string } = {},
+  opts: ApiOptions = {},
+): Promise<Response> {
+  const { base, key } = apiTarget(opts)
+  const { path = '', ...rest } = init
+  const headers = new Headers(rest.headers)
+  if (key) headers.set('Authorization', `Bearer ${key}`)
+  const sub = path.replace(/^\/+/, '')
+  return fetch(`${base}${fnPath(name)}/invoke${sub ? '/' + sub : ''}`, { method: 'POST', ...rest, headers })
+}
+
+/** The old name keeps invoking until `old_name_forwards_until` (unix seconds), 7 days. */
+export async function renameFunction(name: string, newName: string, opts: ApiOptions = {}): Promise<{ name: string; old_name_forwards_until: number }> {
+  return apiReq('POST', `${fnPath(name)}/rename`, opts, { name: newName })
+}
+
+/** Newest first; the first entry is what runs. */
+export async function listFunctionDeployments(name: string, opts: ApiOptions = {}): Promise<FunctionDeployment[]> {
+  return (await apiReq('GET', `${fnPath(name)}/deployments`, opts)).deployments || []
+}
+
+/** Fails with a 409 ApiError when that deployment's code was not kept. */
+export async function rollbackFunction(name: string, deploymentId: string, opts: ApiOptions = {}): Promise<void> {
+  await apiReq('POST', `${fnPath(name)}/deployments/${encodeURIComponent(deploymentId)}/rollback`, opts)
+}
+
+/** The key-less invoke URL of a public function. Call it with plain `fetch`; never send the API key there. */
+export function publicInvokeUrl(fn: Pick<FunctionInfo, 'public_id'> | string, apiUrl = config().apiUrl): string {
+  const id = typeof fn === 'string' ? fn : fn.public_id
+  if (!id) throw new Error('function is not public — update it with { public: true }')
+  return `${apiUrl.replace(/\/+$/, '')}/v1/public/functions/${encodeURIComponent(id)}/invoke`
 }

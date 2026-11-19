@@ -83,6 +83,35 @@ Events: `sandbox.created`, `sandbox.ended`, `sandbox.paused`, `sandbox.resumed`,
 `{ id, type, at, sandbox: { id, template }, data }`. Retries reuse `id` (also in
 `x-pilldrops-delivery`), so dedupe on it.
 
+## Functions
+
+Deploy an HTTP handler that scales replicas on demand. These take the org API
+key.
+
+```ts
+import { createFunction, invokeFunction, publicInvokeUrl } from '@pilldrops/sdk'
+
+const fn = await createFunction({
+  name: 'hello', template: 'node-20', start: 'node index.js', port: 3000, public: true,
+  files: [{ path: 'index.js', content: "require('http').createServer((q, r) => r.end('hi')).listen(3000)" }],
+})
+
+const res = await invokeFunction('hello', { path: '/greet?to=you' })   // the handler's own Response
+console.log(res.status, await res.text())
+
+await fetch(publicInvokeUrl(fn))                                       // public: no key needed
+```
+
+| | |
+|---|---|
+| `listFunctions()` · `getFunction(name)` · `deleteFunction(name)` | read and remove |
+| `createFunction({ name, start, template?, port?, vcpu?, memory_mb?, max_replicas?, replica_concurrency?, idle_timeout?, public?, env?, files? })` | deploy; `idle_timeout: 0` keeps one replica warm |
+| `updateFunction(name, changes)` | omitted fields keep their value; `env: {}` clears env, `public: false` turns key-less invoke off |
+| `invokeFunction(name, { path?, method?, headers?, body? })` | a fetch `Response` with any status; it does not throw on a handler error |
+| `publicInvokeUrl(fn \| publicId, apiUrl?)` | the key-less invoke URL; throws when the function is not public |
+| `renameFunction(name, newName)` | the old name keeps invoking for 7 days |
+| `listFunctionDeployments(name)` · `rollbackFunction(name, deploymentId)` | deployments newest first (the first runs); rollback throws a 409 `ApiError` when that code was not kept |
+
 ## Build and test
 
 ```bash
